@@ -271,7 +271,7 @@ async def iamnot(ctx, role: str):
     else:
         await ctx.respond(f'You do not have this role. Your roles:\n'+'\n'.join(r.name for r in ctx.author.roles[1:]))
 
-@bot.slash_command(description='Trefferzone würfeln.')
+@bot.slash_command(description='Roll hit zone.')
 async def roll_trefferzone(ctx):
     await ctx.respond(f'{ctx.author.name} wurde am {random.choice(trefferzonen)} getroffen.')
 
