@@ -8,23 +8,33 @@ import json
 import datetime
 from datetime import time
 import calendar
+from dotenv import load_dotenv
 
-bdayfile = '/home/debian/discordbot-Bot/bdays.json'
+bdayfile = '/home/ubuntu/discordbot/bdays.json'
+logfile = '/home/ubuntu/discordbot/Bot.log'
 
 birthdays = []
 if os.path.isfile(bdayfile):
     with open(bdayfile, 'r') as file:
         birthdays = json.load(file)
 
-bot_hoehle = os.getenv('BOT_HOEHLE')
-keksrunde_main = os.getenv('KEKSRUNDE_MAIN')
+if not os.path.isfile(logfile):
+    f = open(logfile, "x")
 
-bot_hoehle_channel = os.getenv('bot_hoehle_channel')
-hauptchat = os.getenv('hauptchat')
-bot_log = os.getenv('bot_log')
+load_dotenv(dotenv_path='.env')
+
+# Servers
+keksrunde = int(os.environ.get('KEKSRUNDE'))
+bot_hoehle = int(os.environ.get('BOTHOEHLE'))
+
+# Channels
+keksrunde_hauptchat = int(os.environ.get('KEKSRUNDE_HAUPTCHAT'))
+bot_hoehle_channel = int(os.environ.get('BOTHOEHLE_CMD_CHANNEL'))
+bot_log = int(os.environ.get('BOTLOG'))
 
 
-bot = commands.Bot(Intents=discord.Intents.all())
+
+bot = commands.Bot(command_prefix='/',Intents=discord.Intents.all())
 
 roleWhitelist = ["Green","Keksritter", "bonk", "Gamer Gremlins", "Phasmocrew", "four clowns walk into a bank ...", "Gunfire Reborn", "Space Rock Junkies", "Robokiller", "Free-for-all", "Zivilisation 6", "7Tagesadventisten", "geo Rätseler"]
 
@@ -36,18 +46,22 @@ trefferzonen = ["linken Bein", "linken Bein", "linken Bein",
                 "Oberkörper", "Oberkörper", "Oberkörper", "Oberkörper",
                 "Kopf", "Kopf"]
 
-# WIP
-salutes = ["Rock on!", "Rock and Stone... Yeeaaahhh!", "Rock and Stone forever!",
-          "Rock and Stone!", "For Rock and Stone!", "If you don't Rock and Stone, you ain't comin' home!",
-          "Rock and Stone in the Heart!", "For Karl!", "Did I hear a Rock and Stone?",
-          "We fight for Rock and Stone!"]
+salutes = ["Rock on!", "Rock! (burp) And! (burp) Stone! (burp)", "Stone and Rock! Oh, wait?", "For Teamwork!", "Rock and Stone! It never gets old.", "Let's Rock and Stone!",
+           "Rock and Stone... Yeeaaahhh!", "", "ROCK! AND! STONE!", "Rock... Solid!", "Galaxy's finest!", "For those about to Rock and Stone, we salute you!",
+           "Rock and Stone you beautiful dwarf!", "Rockitty Rock and Stone!", "Gimmie an R! Gimmie an S! Gimmie a Rock. And. Stone!", "We're the best!",
+           "If I had a credit for every Rock and Stone.", "Rock and Stone like there's no tomorrow!", "Rock and Stone, the pretty sound of teamwork!", "Gimmie a Rock... and Stone!", 
+           "Rock me like a Stone!", "By the Beard!",  "Leave No Dwarf Behind!", "Rock solid!", "Rock and Stone, Brother!", "Rock and Stone to the Bone!", "Rock and Stone everyone!",
+           "Come on guys! Rock and Stone!", "None can stand before us!", "Yeaahhh! Rock and Stone!", "Rock and Stone forever!", "Rock and Stone!", "For Rock and Stone!",
+           "If you don't Rock and Stone, you ain't comin' home!", "Rock and Stone in the Heart!", "For Karl!", "Did I hear a Rock and Stone?", "We fight for Rock and Stone!",
+           "We are unbreakable!", "Rock and roll!", "Rock and roll and stone!", "That's it lads! Rock and Stone!", "Like that! Rock and Stone!"]
 
 async def log(log_message):
     timestamp = datetime.datetime.now()
     message = str(timestamp)+" - "+log_message+"\n\n"
     channel = bot.get_channel(bot_log)
+
     await channel.send(message)
-    with open('/home/debian/discordbot-Bot/Bot.log', 'a') as file:
+    with open(logfile, 'a') as file:
         file.write(message)
 
 async def on_raw_member_remove(payload):
@@ -61,10 +75,9 @@ async def on_ready():
     checkBirthday.start()
     checkAlive.start()
 
-# VERWENDET ZEITZONE UTC!!!! -1 Stunde zu GMT+1/Berlin
+# USES TIMEZONE UTC! -1 hour compared to GMT+1/Berlin
 @tasks.loop(hours=1)
 async def checkAlive():
-##    await log ("Tick, it's "+str(datetime.datetime.now()))
     if datetime.datetime.now().hour != 0:
         return
 
@@ -76,7 +89,7 @@ async def checkBirthday():
     today = datetime.datetime.now().strftime("%d.%m")
     day, _, month = today.partition('.')
     month = int(month)
-    channel = bot.get_channel(hauptchat)
+    channel = bot.get_channel(keksrunde_hauptchat)
     for item in birthdays:
         if item['day'] == day and item['month'] == calendar.month_name[month]:
             await channel.send("Happy Birthday <@"+item['id']+">!")
@@ -86,7 +99,7 @@ async def hello(ctx):
     name = ctx.author.name
     await ctx.respond(f"Hello {name}, you miserable creature.")
 
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde_main], description='Add your birthday as a reminder for your senile friends. Format: dd.mm')
+@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add your birthday as a reminder for your senile friends. Format: dd.mm')
 async def add_birthday(ctx, birthday: str):
 
     for item in birthdays:
@@ -171,7 +184,7 @@ async def roll(ctx, diceroll: str):
             await ctx.respond('Rolling '+given_command+':\n'+"I don't have that many dices. Max number is 100.")
             return
         if size > 1000:
-            await ctx.respond('Rolling '+given_command+':\n'+"There ain't no such thing as a d"+str(size)+". Max size is 1000.")
+            await ctx.respond('Rolling '+given_command+':\n'+"There is no such thing as a d"+str(size)+". Max size is 1000.")
             return
 
         nums = []
@@ -201,8 +214,6 @@ async def sr_roll(ctx, count: int, ex: bool):
 
     countstr = str(count)
     succ = 0
-    sixes = 0
-    fives = 0
     ones = 0
     nums = []
 
@@ -213,7 +224,6 @@ async def sr_roll(ctx, count: int, ex: bool):
         if rollvalue == 5:
             succ+=1
         if rollvalue == 6:
-            sixes+=1
             succ+=1
             if ex is True:
                 count+=1
@@ -228,11 +238,11 @@ async def sr_roll(ctx, count: int, ex: bool):
        exstr = ' exploding (' + str(count) + ' dices total)'
     await ctx.respond('Rolling ' + countstr + 'd6 '+ exstr + '\n' + ' '.join(nums_str) + '\nSuccesses (5 and 6): '+str(succ)+', Misses (1): '+str(ones))
 
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde_main], description='Prints available roles for self-enroll.')
+@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Prints available roles for self-enroll.')
 async def availableroles(ctx):
     await ctx.respond('Available roles for self-enroll:\n\n'+'\n'.join(r for r in roleWhitelist))
 
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde_main], description='Gives you a role.')
+@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Gives you a role.')
 async def iam(ctx, role: str):
     if "admin" in role.lower():
         await ctx.respond("Hahahahaha... No.")
@@ -255,7 +265,7 @@ async def iam(ctx, role: str):
     else:
         await ctx.respond('Not an available role for self-enrolling. Available roles:\n\n'+'\n'.join(r for r in roleWhitelist))
 
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde_main], description='Removes selected role.')
+@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Removes selected role.')
 async def iamnot(ctx, role: str):
     user = ctx.author
     userRoles = user.roles
@@ -271,18 +281,30 @@ async def iamnot(ctx, role: str):
     else:
         await ctx.respond(f'You do not have this role. Your roles:\n'+'\n'.join(r.name for r in ctx.author.roles[1:]))
 
-@bot.slash_command(description='Roll hit zone.')
+@bot.slash_command(description='Trefferzone würfeln.')
 async def roll_trefferzone(ctx):
     await ctx.respond(f'{ctx.author.name} wurde am {random.choice(trefferzonen)} getroffen.')
 
-@bot.slash_command(description='Shutdown Bot. Endless Admin only, netter Versuch :)')
-@commands.has_any_role("Endless Admin", "Wise Wolf", "Obaka")
+@bot.slash_command(description='Did I hear a Rock and Stone?')
+async def rock_and_stone(ctx):
+    await ctx.respond(f'{random.choice(salutes)}')
+
+@bot.slash_command(description='Crash test. Admin only.')
+@commands.has_any_role("Endless Admin")
+async def crash_test(ctx):
+    await ctx.respond('Oh no, I crashed!')
+    await log('Bot was crashed on purpose.')
+    sys.exit(1)
+
+@bot.slash_command(description='Shutdown Bot. Admin only, nice try :)')
+@commands.has_any_role("Endless Admin")
 async def shutdown(ctx):
+    await ctx.respond('Shutting down...')
     await log('Bot was shut down.')
     await bot.close()
+    sys.exit(0)
 
 try:
-    bot.run(os.getenv('BOTBAKA'))
+    bot.run(os.environ.get('BOTBAKA'))
 except KeyboardInterrupt:
-    print("Interrupted...")
     sys.exit(0)

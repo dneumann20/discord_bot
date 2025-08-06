@@ -1,0 +1,18 @@
+[Unit]
+Description=Discord Botbaka
+Requires=docker.service
+After=docker.service network.target
+StartLimitIntervalSec=60
+
+[Service]
+WorkingDirectory=/home/ubuntu/discordbot
+ExecStart=/usr/bin/docker compose up --no-recreate --remove-orphans
+ExecStop=/usr/bin/docker compose down
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+SyslogIdentifier=botbaka
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+services:
+  discordbot:
+    build: .
+    container_name: botbaka
+    env_file:
+      - .env
+    volumes:
+      - .:/home/ubuntu/discordbot
