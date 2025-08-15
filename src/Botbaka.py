@@ -1,22 +1,48 @@
 import asyncio
 import random
 import sys
+from zoneinfo import ZoneInfo
 import discord
 import os
 from discord.ext import tasks, commands
 import json
-import datetime
+from datetime import datetime
 from datetime import time
 import calendar
+from discord import Option
 from dotenv import load_dotenv
 
 bdayfile = '/home/ubuntu/discordbot/bdays.json'
+reminderfile = '/home/ubuntu/discordbot/reminders.json'
+role_message_file = '/home/ubuntu/discordbot/rolemessage.json'
 logfile = '/home/ubuntu/discordbot/Bot.log'
+
+role_message_id = None
 
 birthdays = []
 if os.path.isfile(bdayfile):
     with open(bdayfile, 'r') as file:
         birthdays = json.load(file)
+else:
+    reminderfile = os.path('bdays.json')
+
+reminders = []
+if os.path.isfile(reminderfile):
+    with open(reminderfile, 'r') as file:
+        reminders = json.load(file)
+else:
+    reminderfile = os.path('reminders.json')
+
+role_message = []
+if os.path.isfile(role_message_file):
+    with open(role_message_file, 'r') as file:
+        try:
+            role_json = json.load(file)
+            role_message_id = role_json[0]['role_message_id']
+        except:
+            pass
+else:
+    role_message_file = os.path('rolemessage.json')
 
 if not os.path.isfile(logfile):
     f = open(logfile, "x")
@@ -32,11 +58,27 @@ keksrunde_hauptchat = int(os.environ.get('KEKSRUNDE_HAUPTCHAT'))
 bot_hoehle_channel = int(os.environ.get('BOTHOEHLE_CMD_CHANNEL'))
 bot_log = int(os.environ.get('BOTLOG'))
 
-
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
 
 bot = commands.Bot(command_prefix='/',Intents=discord.Intents.all())
 
-roleWhitelist = ["Green","Keksritter", "bonk", "Gamer Gremlins", "Phasmocrew", "four clowns walk into a bank ...", "Gunfire Reborn", "Space Rock Junkies", "Robokiller", "Free-for-all", "Zivilisation 6", "7Tagesadventisten", "geo Rätseler"]
+roleWhitelist = {
+    "💚": "Green",
+    "🍪": "Keksritter",
+    "🧟‍♂️": "7Tagesadventisten",
+    "🤡": "four clowns walk into a bank ...",
+    "⛏️": "Space Rock Junkies",
+    "👻": "Phasmocrew",
+    "🤖": "Robokiller",
+    "👺": "Gamer Gremlins",
+    "🏰": "Zivilisation 6",
+    "📍": "geo Rätseler",
+    "💣": "Gegenschlag 2",
+    "<:catft:685124473476743215>": "Gunfire Reborn",
+    "🦽": "Free-for-all",
+    "🔫": "guntastbar",
+    "<:baddragon:863485520721870898>": "bonk"
+}
 
 trefferzonen = ["linken Bein", "linken Bein", "linken Bein",
                 "rechten Bein", "rechten Bein","rechten Bein",
@@ -56,7 +98,7 @@ salutes = ["Rock on!", "Rock! (burp) And! (burp) Stone! (burp)", "Stone and Rock
            "We are unbreakable!", "Rock and roll!", "Rock and roll and stone!", "That's it lads! Rock and Stone!", "Like that! Rock and Stone!"]
 
 async def log(log_message):
-    timestamp = datetime.datetime.now()
+    timestamp = datetime.now()
     message = str(timestamp)+" - "+log_message+"\n\n"
     channel = bot.get_channel(bot_log)
 
@@ -70,15 +112,48 @@ async def on_raw_member_remove(payload):
     await log(leaveMessage)
 
 @bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return  # Ignore bot's own reactions
+    if payload.message_id != role_message_id:
+        return  # Ignore other messages
+
+    guild = bot.get_guild(payload.guild_id)
+    member = payload.member
+    emoji = str(payload.emoji)
+
+    if emoji in roleWhitelist:
+        role = discord.utils.get(guild.roles, name=roleWhitelist[emoji])
+        if role:
+            await member.add_roles(role)
+
+@bot.event
+async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return  # Ignore bot's own reactions
+    if payload.message_id != role_message_id:
+        return # Ignore other messages
+
+    guild = bot.get_guild(payload.guild_id)
+    member = await guild.fetch_member(payload.user_id)
+    emoji = str(payload.emoji)
+
+    if emoji in roleWhitelist:
+        role = discord.utils.get(guild.roles, name=roleWhitelist[emoji])
+        if role:
+            await member.remove_roles(role)
+
+@bot.event
 async def on_ready():
     await log('Bot started!')
     checkBirthday.start()
+    checkReminders.start()
     checkAlive.start()
 
 # USES TIMEZONE UTC! -1 hour compared to GMT+1/Berlin
 @tasks.loop(hours=1)
 async def checkAlive():
-    if datetime.datetime.now().hour != 0:
+    if datetime.now().hour != 0:
         return
 
     channel = bot.get_channel(bot_log)
@@ -86,13 +161,33 @@ async def checkAlive():
 
 @tasks.loop(time=time(hour=23, minute=3, second=0), reconnect=True)
 async def checkBirthday():
-    today = datetime.datetime.now().strftime("%d.%m")
+    today = datetime.now().strftime("%d.%m")
     day, _, month = today.partition('.')
     month = int(month)
     channel = bot.get_channel(keksrunde_hauptchat)
     for item in birthdays:
         if item['day'] == day and item['month'] == calendar.month_name[month]:
-            await channel.send("Happy Birthday <@"+item['id']+">!")
+            if item['day'] == "8" and item['month'] == "August":
+                await channel.send("Happy LayDay <@"+item['id']+">!")
+            else:
+                await channel.send("Happy Birthday <@"+item['id']+">!")
+
+@tasks.loop(minutes=1, reconnect=True)
+async def checkReminders():
+    now = datetime.now(LOCAL_TZ)
+    for reminder in reminders[:]:
+        remind_at = datetime.fromisoformat(reminder["remind_at"])
+        if remind_at <= now:
+            channel = bot.get_channel(reminder["channel"])
+            user = await bot.fetch_user(reminder["id"])
+            await channel.send(f"Reminder by {user}: {reminder['message']}")
+
+            reminders.remove(reminder)
+
+    lock = asyncio.Lock()
+    async with lock:
+        with open(reminderfile, 'w') as file:
+            json.dump(reminders, file)
 
 @bot.slash_command(guild_ids=[bot_hoehle])
 async def hello(ctx):
@@ -100,11 +195,17 @@ async def hello(ctx):
     await ctx.respond(f"Hello {name}, you miserable creature.")
 
 @bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add your birthday as a reminder for your senile friends. Format: dd.mm')
-async def add_birthday(ctx, birthday: str):
+async def add_birthday(
+    ctx,
+    birthday: Option(str, "Format: dd.mm"),  # type: ignore
+    user: Option(discord.User, "Format: dd.mm", required=False)  # type: ignore
+):
+    if user is None:
+        user = ctx.author
 
     for item in birthdays:
-        if str(ctx.author.id) in item:
-            await ctx.respond("You already added yourself, dummy.")
+        if user.id in item:
+            await ctx.respond("You already added yourself.")
             return
 
     try:
@@ -147,21 +248,57 @@ async def add_birthday(ctx, birthday: str):
             lock = asyncio.Lock()
             async with lock:
                 with open(bdayfile, 'w') as file:
-                    id = str(ctx.author.id)
-                    data = {
-                        "id": id,
+                    birthdays.append({
+                        "id": str(user.id),
                         "day": str(day),
                         "month": calendar.month_name[month]
-                    }
-                    birthdays.append(data)
-
+                    })
                     json.dump(birthdays, file)
-                    await ctx.respond("Birthday saved for "+ctx.author.name)
+                    await ctx.respond("Birthday saved for "+user.name)
         else:
             await ctx.respond("Nice job, you broke it. Try again. Format: dd.mm")
             return
     except ValueError:
         await ctx.respond('Bad formatting. Format: dd.mm')
+
+@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add a reminder for yourself or others. Format: dd.mm')
+async def add_reminder(
+    ctx,
+    reminder_message: Option(str, "Your reminder message"), # type: ignore
+    date: Option(str, "Date in format dd.mm.yyyy", required = False), # type: ignore
+    time: Option(str, "Time in format hh:mm", required = False) # type: ignore
+):
+    try:
+        if date is None and time is None:
+            await ctx.respond("Either time or date must be set.", ephemeral=True)
+            return
+        if date is None:
+            date = datetime.now(LOCAL_TZ).strftime("%d.%m.%Y")
+        if time is None:
+            time = datetime.now(LOCAL_TZ).strftime("%H:%M")
+
+        combined_timestamp = f"{date} {time}"
+        local_dt = datetime.strptime(combined_timestamp, "%d.%m.%Y %H:%M").replace(tzinfo=LOCAL_TZ)
+
+        # Check if the datetime is in the future
+        if local_dt <= datetime.now(LOCAL_TZ):
+            await ctx.respond("The specified date and time must be in the future.", ephemeral=True)
+            return
+
+        lock = asyncio.Lock()
+        async with lock:
+            with open(reminderfile, 'w') as file:
+                id = str(ctx.author.id)
+                reminders.append({
+                    "channel": ctx.channel.id,
+                    "id": id,
+                    "remind_at": local_dt.astimezone(ZoneInfo("UTC")).isoformat(),
+                    "message": reminder_message
+                })
+                json.dump(reminders, file)
+                await ctx.respond("Reminder saved by "+ctx.author.name)
+    except ValueError:
+        await ctx.respond('Bad formatting. Parameters: dd.mm.yyyy, MM:HH, <reminder_message>')
 
 @bot.slash_command(description='Roll dices, duh!')
 async def roll(ctx, diceroll: str):
@@ -238,48 +375,30 @@ async def sr_roll(ctx, count: int, ex: bool):
        exstr = ' exploding (' + str(count) + ' dices total)'
     await ctx.respond('Rolling ' + countstr + 'd6 '+ exstr + '\n' + ' '.join(nums_str) + '\nSuccesses (5 and 6): '+str(succ)+', Misses (1): '+str(ones))
 
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Prints available roles for self-enroll.')
-async def availableroles(ctx):
-    await ctx.respond('Available roles for self-enroll:\n\n'+'\n'.join(r for r in roleWhitelist))
-
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Gives you a role.')
-async def iam(ctx, role: str):
-    if "admin" in role.lower():
-        await ctx.respond("Hahahahaha... No.")
-        return
-
-    user = ctx.author
-    userRoles = user.roles
-    roleObj = discord.utils.get(ctx.guild.roles,name=role)
-    if roleObj is None:
-        await ctx.respond('I am case sensitive. Available roles:\n\n'+'\n'.join(r for r in roleWhitelist))
-        return
-    elif roleObj in userRoles:
-        await ctx.respond('You already have this role. Dummy.')
-        return
-    
-    if role in roleWhitelist:
-        await user.add_roles(roleObj)
-        await ctx.respond(user.name + " was given the role '"+role+"'.")
-        await log(user.name + " was given the role '"+role+"'.")
+@bot.slash_command(guild_ids=[keksrunde], description='Print role message to react to.')
+@commands.has_any_role("Obaka")
+async def printrolemessage(ctx):
+    role_list = "Available roles for self-enroll:\n\n"
+    if ctx.guild_id == keksrunde:
+        # Ignore test role "Green"
+        role_list += "\n".join(f"{emoji} — {role}" for emoji, role in roleWhitelist.items() if role != "Green")
     else:
-        await ctx.respond('Not an available role for self-enrolling. Available roles:\n\n'+'\n'.join(r for r in roleWhitelist))
+        role_list += "\n".join(f"{emoji} — {role}" for emoji, role in roleWhitelist.items())
 
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Removes selected role.')
-async def iamnot(ctx, role: str):
-    user = ctx.author
-    userRoles = user.roles
-    roleObj = discord.utils.get(userRoles,name=role)
-    if roleObj is None:
-        await ctx.respond('I am case sensitive. User has following roles:\n\n'+'\n'.join(r.name for r in ctx.author.roles[1:]))
-        return
-    
-    if roleObj in userRoles:
-        await user.remove_roles(roleObj)
-        await ctx.respond("Role '" + role + "' was removed from "+ctx.author.name+".")
-        await log("Role '" + role + "' was removed from "+ctx.author.name+".")
-    else:
-        await ctx.respond(f'You do not have this role. Your roles:\n'+'\n'.join(r.name for r in ctx.author.roles[1:]))
+    # Send the message
+    await ctx.respond("Yeet", ephemeral=True)
+    message_obj = await ctx.send(role_list)
+
+    for emoji, role in roleWhitelist.items():
+        if ctx.guild_id != keksrunde or role != "Green":
+            await message_obj.add_reaction(emoji)
+
+    role_message_id = message_obj.id
+    with open(role_message_file, 'w') as file:
+        role_message.append({
+            "role_message_id": role_message_id,
+        })
+        json.dump(role_message, file)
 
 @bot.slash_command(description='Trefferzone würfeln.')
 async def roll_trefferzone(ctx):
@@ -289,15 +408,15 @@ async def roll_trefferzone(ctx):
 async def rock_and_stone(ctx):
     await ctx.respond(f'{random.choice(salutes)}')
 
-@bot.slash_command(description='Crash test. Admin only.')
-@commands.has_any_role("Endless Admin")
+@bot.slash_command(guild_ids=[bot_hoehle], description='Crash test :)')
+@commands.has_any_role("Wise Wolf", "Obaka")
 async def crash_test(ctx):
     await ctx.respond('Oh no, I crashed!')
     await log('Bot was crashed on purpose.')
     sys.exit(1)
 
-@bot.slash_command(description='Shutdown Bot. Admin only, nice try :)')
-@commands.has_any_role("Endless Admin")
+@bot.slash_command(guild_ids=[bot_hoehle], description='Shutdown Bot.')
+@commands.has_any_role("Wise Wolf", "Obaka")
 async def shutdown(ctx):
     await ctx.respond('Shutting down...')
     await log('Bot was shut down.')
