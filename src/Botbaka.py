@@ -24,7 +24,7 @@ if os.path.isfile(bdayfile):
     with open(bdayfile, 'r') as file:
         birthdays = json.load(file)
 else:
-    reminderfile = os.path('bdays.json')
+    bdayfile = os.path('bdays.json')
 
 reminders = []
 if os.path.isfile(reminderfile):
