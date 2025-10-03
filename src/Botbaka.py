@@ -11,11 +11,13 @@ from datetime import time
 import calendar
 from discord import Option
 from dotenv import load_dotenv
+import sqlite3
 
 bdayfile = '/home/ubuntu/discordbot/bdays.json'
-reminderfile = '/home/ubuntu/discordbot/reminders.json'
 role_message_file = '/home/ubuntu/discordbot/rolemessage.json'
 logfile = '/home/ubuntu/discordbot/Bot.log'
+# DB_PATH = '/home/ubuntu/discordbot/data.db'
+DB_PATH = 'data.db'
 
 role_message_id = None
 
@@ -23,15 +25,6 @@ birthdays = []
 if os.path.isfile(bdayfile):
     with open(bdayfile, 'r') as file:
         birthdays = json.load(file)
-else:
-    bdayfile = os.path('bdays.json')
-
-reminders = []
-if os.path.isfile(reminderfile):
-    with open(reminderfile, 'r') as file:
-        reminders = json.load(file)
-else:
-    reminderfile = os.path('reminders.json')
 
 role_message = []
 if os.path.isfile(role_message_file):
@@ -41,8 +34,6 @@ if os.path.isfile(role_message_file):
             role_message_id = role_json[0]['role_message_id']
         except:
             pass
-else:
-    role_message_file = os.path('rolemessage.json')
 
 if not os.path.isfile(logfile):
     f = open(logfile, "x")
@@ -97,6 +88,7 @@ salutes = ["Rock on!", "Rock! (burp) And! (burp) Stone! (burp)", "Stone and Rock
            "If you don't Rock and Stone, you ain't comin' home!", "Rock and Stone in the Heart!", "For Karl!", "Did I hear a Rock and Stone?", "We fight for Rock and Stone!",
            "We are unbreakable!", "Rock and roll!", "Rock and roll and stone!", "That's it lads! Rock and Stone!", "Like that! Rock and Stone!"]
 
+
 async def log(log_message):
     timestamp = datetime.now()
     message = str(timestamp)+" - "+log_message+"\n\n"
@@ -106,10 +98,12 @@ async def log(log_message):
     with open(logfile, 'a') as file:
         file.write(message)
 
+
 async def on_raw_member_remove(payload):
     guild = bot.get_guild(payload.guild_id)
     leaveMessage = payload.user.name+" just left the server "+guild.name
     await log(leaveMessage)
+
 
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
@@ -127,12 +121,13 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         if role:
             await member.add_roles(role)
 
+
 @bot.event
 async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
     if payload.user_id == bot.user.id:
-        return  # Ignore bot's own reactions
+        return
     if payload.message_id != role_message_id:
-        return # Ignore other messages
+        return
 
     guild = bot.get_guild(payload.guild_id)
     member = await guild.fetch_member(payload.user_id)
@@ -143,12 +138,17 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
         if role:
             await member.remove_roles(role)
 
+
 @bot.event
 async def on_ready():
     await log('Bot started!')
-    checkBirthday.start()
-    checkReminders.start()
-    checkAlive.start()
+    if not checkBirthday.is_running():
+        checkBirthday.start()
+    if not checkReminders.is_running():
+       checkReminders.start()
+    if not checkAlive.is_running():
+        checkAlive.start()
+
 
 # USES TIMEZONE UTC! -1 hour compared to GMT+1/Berlin
 @tasks.loop(hours=1)
@@ -159,40 +159,62 @@ async def checkAlive():
     channel = bot.get_channel(bot_log)
     await channel.send("I am alive.")
 
+
 @tasks.loop(time=time(hour=23, minute=3, second=0), reconnect=True)
 async def checkBirthday():
-    today = datetime.now().strftime("%d.%m")
-    day, _, month = today.partition('.')
-    month = int(month)
-    channel = bot.get_channel(keksrunde_hauptchat)
-    for item in birthdays:
-        if item['day'] == day and item['month'] == calendar.month_name[month]:
-            if item['day'] == "8" and item['month'] == "August":
-                await channel.send("Happy LayDay <@"+item['id']+">!")
-            else:
-                await channel.send("Happy Birthday <@"+item['id']+">!")
+    today = datetime.now()
+    day = today.day
+    month = today.month
+    # special handling for "LayDay"
+    if day == 8 and month == 8:  
+        await channel.send(f"Happy LayDay <@{int(os.environ.get('LAY'))}>!")
+    connection = sqlite3.connect(DB_PATH)
+    cursor = connection.cursor()
+    cursor.execute("""
+        SELECT id, day, month FROM birthdays
+        WHERE day=? AND month=?
+    """, (day, month))
+    rows = cursor.fetchall()
+    connection.close()
+    if not rows:
+        return
+    channel = bot.get_channel(keksrunde_hauptchat)   
+    for user_id, _, _ in rows:
+        await channel.send(f"Happy Birthday <@{user_id}>!")
+
 
 @tasks.loop(minutes=1, reconnect=True)
 async def checkReminders():
+    """Check the database for due reminders and send them."""
     now = datetime.now(LOCAL_TZ)
-    for reminder in reminders[:]:
-        remind_at = datetime.fromisoformat(reminder["remind_at"])
-        if remind_at <= now:
-            channel = bot.get_channel(reminder["channel"])
-            user = await bot.fetch_user(reminder["id"])
-            await channel.send(f"Reminder by {user}: {reminder['message']}")
+    connection = sqlite3.connect(DB_PATH)
+    cursor = connection.cursor()
 
-            reminders.remove(reminder)
+    cursor.execute("SELECT id, user_id, channel_id, remind_at, message FROM reminders WHERE remind_at <= ?", (now.isoformat(),))
+    rows = cursor.fetchall()
+    due_reminders = []
+    for reminder_id, user_id, channel_id, remind_at_str, message in rows:
+        remind_at = datetime.fromisoformat(remind_at_str)
 
-    lock = asyncio.Lock()
-    async with lock:
-        with open(reminderfile, 'w') as file:
-            json.dump(reminders, file)
+        if remind_at <= now:  # time reached
+            channel = bot.get_channel(channel_id)
+            user = await bot.fetch_user(user_id)
+            if channel and user:
+                await channel.send(f"Reminder by {user.mention}: {message}")
+
+            due_reminders.append(reminder_id)
+
+    if due_reminders:
+        cursor.executemany("DELETE FROM reminders WHERE id=?", [(reminder,) for reminder in due_reminders])
+        connection.commit()
+
+    connection.close()
 
 @bot.slash_command(guild_ids=[bot_hoehle])
 async def hello(ctx):
     name = ctx.author.name
     await ctx.respond(f"Hello {name}, you miserable creature.")
+
 
 @bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add your birthday as a reminder for your senile friends. Format: dd.mm')
 async def add_birthday(
@@ -261,7 +283,8 @@ async def add_birthday(
     except ValueError:
         await ctx.respond('Bad formatting. Format: dd.mm')
 
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add a reminder for yourself or others. Format: dd.mm')
+
+@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add a reminder for yourself or others.')
 async def add_reminder(
     ctx,
     reminder_message: Option(str, "Your reminder message"), # type: ignore
@@ -287,18 +310,20 @@ async def add_reminder(
 
         lock = asyncio.Lock()
         async with lock:
-            with open(reminderfile, 'w') as file:
-                id = str(ctx.author.id)
-                reminders.append({
-                    "channel": ctx.channel.id,
-                    "id": id,
-                    "remind_at": local_dt.astimezone(ZoneInfo("UTC")).isoformat(),
-                    "message": reminder_message
-                })
-                json.dump(reminders, file)
-                await ctx.respond("Reminder saved by "+ctx.author.name)
+            connection = sqlite3.connect(DB_PATH)
+            cursor = connection.cursor()
+            cursor.execute("""
+                INSERT INTO reminders (user_id, channel_id, remind_at, message)
+                VALUES (?, ?, ?, ?)
+                """, (ctx.author.id, ctx.channel.id, local_dt.astimezone(ZoneInfo("UTC")).isoformat(), reminder_message))
+            connection.commit()
+            connection.close()
+
+        await ctx.respond(f"Reminder saved for {ctx.author.name}", ephemeral=True)
+
     except ValueError:
         await ctx.respond('Bad formatting. Parameters: dd.mm.yyyy, MM:HH, <reminder_message>')
+
 
 @bot.slash_command(description='Roll dices, duh!')
 async def roll(ctx, diceroll: str):
@@ -340,6 +365,7 @@ async def roll(ctx, diceroll: str):
     except ValueError:
         await ctx.respond('Rolling '+diceroll+':\n'+'Bad formatting. Format: NdN[+N]')
 
+
 @bot.slash_command(description='Roll dices for shadowrun, including exploding 6.')
 async def sr_roll(ctx, count: int, ex: bool):
     if not str(count).isnumeric():
@@ -375,6 +401,7 @@ async def sr_roll(ctx, count: int, ex: bool):
        exstr = ' exploding (' + str(count) + ' dices total)'
     await ctx.respond('Rolling ' + countstr + 'd6 '+ exstr + '\n' + ' '.join(nums_str) + '\nSuccesses (5 and 6): '+str(succ)+', Misses (1): '+str(ones))
 
+
 @bot.slash_command(guild_ids=[keksrunde], description='Print role message to react to.')
 @commands.has_any_role("Obaka")
 async def printrolemessage(ctx):
@@ -400,13 +427,16 @@ async def printrolemessage(ctx):
         })
         json.dump(role_message, file)
 
+
 @bot.slash_command(description='Trefferzone würfeln.')
 async def roll_trefferzone(ctx):
     await ctx.respond(f'{ctx.author.name} wurde am {random.choice(trefferzonen)} getroffen.')
 
+
 @bot.slash_command(description='Did I hear a Rock and Stone?')
 async def rock_and_stone(ctx):
     await ctx.respond(f'{random.choice(salutes)}')
+
 
 @bot.slash_command(guild_ids=[bot_hoehle], description='Crash test :)')
 @commands.has_any_role("Wise Wolf", "Obaka")
@@ -415,6 +445,7 @@ async def crash_test(ctx):
     await log('Bot was crashed on purpose.')
     sys.exit(1)
 
+
 @bot.slash_command(guild_ids=[bot_hoehle], description='Shutdown Bot.')
 @commands.has_any_role("Wise Wolf", "Obaka")
 async def shutdown(ctx):
@@ -422,6 +453,7 @@ async def shutdown(ctx):
     await log('Bot was shut down.')
     await bot.close()
     sys.exit(0)
+
 
 try:
     bot.run(os.environ.get('BOTBAKA'))
