@@ -6,25 +6,18 @@ import discord
 import os
 from discord.ext import tasks, commands
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import time
 import calendar
 from discord import Option
 from dotenv import load_dotenv
 import sqlite3
 
-bdayfile = '/home/ubuntu/discordbot/bdays.json'
 role_message_file = '/home/ubuntu/discordbot/rolemessage.json'
 logfile = '/home/ubuntu/discordbot/Bot.log'
-# DB_PATH = '/home/ubuntu/discordbot/data.db'
-DB_PATH = 'data.db'
+DB_PATH = '/home/ubuntu/discordbot/data.db'
 
 role_message_id = None
-
-birthdays = []
-if os.path.isfile(bdayfile):
-    with open(bdayfile, 'r') as file:
-        birthdays = json.load(file)
 
 role_message = []
 if os.path.isfile(role_message_file):
@@ -70,6 +63,9 @@ roleWhitelist = {
     "🔫": "guntastbar",
     "<:baddragon:863485520721870898>": "bonk"
 }
+
+# For month validation
+month_days = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 trefferzonen = ["linken Bein", "linken Bein", "linken Bein",
                 "rechten Bein", "rechten Bein","rechten Bein",
@@ -216,72 +212,55 @@ async def hello(ctx):
     await ctx.respond(f"Hello {name}, you miserable creature.")
 
 
-@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add your birthday as a reminder for your senile friends. Format: dd.mm')
+@bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add your birthday as a reminder for your senile friends.')
 async def add_birthday(
     ctx,
-    birthday: Option(str, "Format: dd.mm"),  # type: ignore
-    user: Option(discord.User, "Format: dd.mm", required=False)  # type: ignore
+    day: Option(int, "Day"),  # type: ignore
+    month: Option(int, "Month"),  # type: ignore
+    user: Option(discord.User, "User (optional)", required=False)  # type: ignore
 ):
-    if user is None:
-        user = ctx.author
+    if not isinstance(day, int) or not isinstance(month, int):
+        await ctx.respond('Day and month must be numeric.', ephemeral=True)
+        return
 
-    for item in birthdays:
-        if user.id in item:
-            await ctx.respond("You already added yourself.")
+    if day == 69 or month == 69:
+        await ctx.respond("Oh look, we got ourselves a comedian here.")
+        return
+
+    if 0 <= month < len(month_days):
+        if not 0 < day <= month_days[month]:
+            await ctx.respond(calendar.month_name[month]+" doesn't have "+str(day)+" days.", ephemeral=True)
             return
 
-    try:
-        if "." in birthday:
-            day, _, month = birthday.partition('.')
+        if day == 1 and month == 4:
+            await ctx.respond("How unfortunate.")
 
-            if not day.isnumeric() and not month.isnumeric():
-                await ctx.respond('Bad formatting. Format: dd.mm')
-                return
-            
-            day = int(day)
-            month = int(month)
+        if user is None:
+            user = ctx.author
 
-            if day == 69 or month == 69:
-                await ctx.respond("Oh look, we got ourselves a comedian here.")
-                return
-            elif month > 12 or month < 1:
-                await ctx.respond("The year doesn't have " +str(month)+" months.")
-                return
-            elif month in (1, 3, 5, 7, 8, 10, 12):
-                if not 1 <= day <= 31:
-                    await ctx.respond(calendar.month_name[month]+" doesn't have "+str(day)+" days." )
-                    return
-            elif month in (4, 6, 9, 11):
-                if not 1 <= day <= 30:
-                    await ctx.respond(calendar.month_name[month]+" doesn't have "+str(day)+" days." )
-                    return
-                else:
-                    pass
-            elif month == 2:
-                if day > 28 or day < 1:
-                    await ctx.respond("February doesn't have "+str(day)+" days.")
-                    return
-                else:
-                    pass
-            
-            if day == 1 and month == 4:
-                await ctx.respond("How unfortunate.")
+        async with asyncio.Lock():
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
 
-            lock = asyncio.Lock()
-            async with lock:
-                with open(bdayfile, 'w') as file:
-                    birthdays.append({
-                        "id": str(user.id),
-                        "day": str(day),
-                        "month": calendar.month_name[month]
-                    })
-                    json.dump(birthdays, file)
-                    await ctx.respond("Birthday saved for "+user.name)
-        else:
-            await ctx.respond("Nice job, you broke it. Try again. Format: dd.mm")
-            return
-    except ValueError:
-        await ctx.respond('Bad formatting. Format: dd.mm')
+            # Check if user already has a birthday entry
+            cur.execute("SELECT id FROM birthdays WHERE id=?", (str(user.id),))
+            existing = cur.fetchone()
+            if existing:
+                await ctx.respond("You already added yourself.", ephemeral=True)
+                conn.close()
+                return
+
+            cur.execute("INSERT INTO birthdays (id, day, month) VALUES (?, ?, ?)",
+                (str(user.id), day, month)
+            )
+
+            conn.commit()
+            conn.close()
+
+        await ctx.respond("Birthday saved for "+user.name)
+
+    else:
+        await ctx.respond("Incorrect month value provided.", ephemeral=True)
 
 
 @bot.slash_command(guild_ids=[bot_hoehle, keksrunde], description='Add a reminder for yourself or others.')
@@ -295,16 +274,19 @@ async def add_reminder(
         if date is None and time is None:
             await ctx.respond("Either time or date must be set.", ephemeral=True)
             return
-        if date is None:
-            date = datetime.now(LOCAL_TZ).strftime("%d.%m.%Y")
-        if time is None:
-            time = datetime.now(LOCAL_TZ).strftime("%H:%M")
+
+        date = date or datetime.now(LOCAL_TZ).strftime("%d.%m.%Y")
+        time = time or datetime.now(LOCAL_TZ).strftime("%H:%M")
 
         combined_timestamp = f"{date} {time}"
         local_dt = datetime.strptime(combined_timestamp, "%d.%m.%Y %H:%M").replace(tzinfo=LOCAL_TZ)
 
-        # Check if the datetime is in the future
-        if local_dt <= datetime.now(LOCAL_TZ):
+        # If date is today's date and time is in the past -> set to tomorrow's time
+        if (date == datetime.now(LOCAL_TZ).strftime("%d.%m.%Y")) and (local_dt <= datetime.now(LOCAL_TZ)):
+            local_dt += timedelta(days=1)
+
+        # Final check combined datetime is in the future
+        elif local_dt <= datetime.now(LOCAL_TZ):
             await ctx.respond("The specified date and time must be in the future.", ephemeral=True)
             return
 
@@ -319,10 +301,10 @@ async def add_reminder(
             connection.commit()
             connection.close()
 
-        await ctx.respond(f"Reminder saved for {ctx.author.name}", ephemeral=True)
+        await ctx.respond(f"Reminder saved for {ctx.author.name} at {local_dt.strftime("%H:%M %d.%m.%Y")}", ephemeral=True)
 
     except ValueError:
-        await ctx.respond('Bad formatting. Parameters: dd.mm.yyyy, MM:HH, <reminder_message>')
+        await ctx.respond('Bad formatting. Parameters: <reminder_message>, dd.mm.yyyy, MM:HH', ephemeral=True)
 
 
 @bot.slash_command(description='Roll dices, duh!')
