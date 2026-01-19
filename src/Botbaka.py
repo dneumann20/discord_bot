@@ -229,9 +229,6 @@ async def add_birthday(
             await ctx.respond(calendar.month_name[month]+" doesn't have "+str(day)+" days.", ephemeral=True)
             return
 
-        if day == 1 and month == 4:
-            await ctx.respond("How unfortunate.")
-
         if user is None:
             user = ctx.author
 
