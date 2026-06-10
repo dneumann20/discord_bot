@@ -397,9 +397,9 @@ async def printrolemessage(ctx):
     role_list = "Available roles for self-enroll:\n\n"
     if ctx.guild_id == keksrunde:
         # Ignore test role "Green"
-        role_list += "\n".join(f"{emoji} — {role}" for emoji, role in roleList.items() if role != "Green")
+        role_list += "\n".join(f"{emoji} - {role}" for emoji, role in roleList.items() if role != "Green")
     else:
-        role_list += "\n".join(f"{emoji} — {role}" for emoji, role in roleList.items())
+        role_list += "\n".join(f"{emoji} - {role}" for emoji, role in roleList.items())
 
     await ctx.respond("Sending role message...", ephemeral=True)
     message_obj = await ctx.send(role_list)
